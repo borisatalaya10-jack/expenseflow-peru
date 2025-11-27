@@ -40,6 +40,21 @@ export default function GastosDocumentos() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
 
+  // Función para obtener URL firmada (signed URL) para archivos privados
+  const obtenerUrlFirmada = async (path: string) => {
+    try {
+      const { data, error } = await supabase.storage
+        .from("gastos-documentos")
+        .createSignedUrl(path, 3600); // URL válida por 1 hora
+
+      if (error) throw error;
+      return data.signedUrl;
+    } catch (error) {
+      console.error("Error al obtener URL firmada:", error);
+      return null;
+    }
+  };
+
   // Fetch concepto de gasto
   const { data: concepto } = useQuery({
     queryKey: ["concepto-gasto", id],
@@ -244,7 +259,14 @@ export default function GastosDocumentos() {
                         <Button
                           variant="ghost"
                           size="icon"
-                          onClick={() => window.open(doc.archivo_url, "_blank")}
+                          onClick={async () => {
+                            const url = await obtenerUrlFirmada(doc.archivo_url);
+                            if (url) {
+                              window.open(url, "_blank");
+                            } else {
+                              alert("Error al obtener URL del documento");
+                            }
+                          }}
                           title="Ver documento"
                         >
                           <Eye className="h-4 w-4" />

@@ -44,16 +44,15 @@ export default function OCRUploadPage() {
 
       if (uploadError) throw uploadError;
 
-      // 3. Obtener URL pública del archivo
-      const {
-        data: { publicUrl },
-      } = supabase.storage.from("gastos-documentos").getPublicUrl(archivoNombre);
+      // 3. Guardar solo el path del archivo (no URL pública porque el bucket es privado)
+      // El path se usará luego para generar signed URLs cuando sea necesario
+      const archivoPath = archivoNombre;
 
       // 4. Guardar datos en la tabla gastos_documentos
       const { error: insertError } = await supabase.from("gastos_documentos").insert({
         concepto_gasto_id: id,
         usuario_id: user.id,
-        archivo_url: publicUrl,
+        archivo_url: archivoPath,
         archivo_nombre: archivoSubido.name,
         archivo_tipo: archivoSubido.type,
         archivo_tamano: archivoSubido.size,
