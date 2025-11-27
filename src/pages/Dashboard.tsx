@@ -8,7 +8,11 @@ import {
   TrendingDown,
   Wallet,
   Users,
+  Receipt,
+  Clock,
+  CheckCircle2,
 } from "lucide-react";
+import { useEstadisticasGastos } from "@/hooks/useGastos";
 import { KPICard } from "@/components/common/KPICard";
 import { LoadingSkeleton } from "@/components/common/LoadingSkeleton";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -163,6 +167,65 @@ export default function Dashboard() {
     },
   });
 
+  // Fetch estadísticas de gastos
+  const { data: statsGastos, isLoading: loadingGastos } = useEstadisticasGastos();
+
+  // Fetch gastos pendientes de aprobación
+  const { data: gastosPendientes } = useQuery({
+    queryKey: ["gastos-pendientes"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("vista_gastos")
+        .select("*")
+        .eq("estado", "pendiente")
+        .order("created_at", { ascending: false })
+        .limit(5);
+
+      if (error) throw error;
+      return data;
+    },
+  });
+
+  // Fetch gastos por concepto (top 5)
+  const { data: gastosPorConcepto } = useQuery({
+    queryKey: ["gastos-por-concepto"],
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc("obtener_gastos_por_concepto", {
+        fecha_inicio: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString(),
+        fecha_fin: new Date().toISOString(),
+      });
+
+      if (error) {
+        // Si la función no existe, obtener datos básicos
+        const { data: gastosData, error: gastosError } = await supabase
+          .from("vista_gastos")
+          .select("concepto_nombre, monto")
+          .gte(
+            "fecha_gasto",
+            new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString()
+          );
+
+        if (gastosError) throw gastosError;
+
+        // Agrupar por concepto
+        const grouped = gastosData?.reduce((acc: any, curr: any) => {
+          const concepto = curr.concepto_nombre || "Sin concepto";
+          if (!acc[concepto]) {
+            acc[concepto] = { concepto, total: 0 };
+          }
+          acc[concepto].total += Number(curr.monto || 0);
+          return acc;
+        }, {});
+
+        return Object.values(grouped || {})
+          .sort((a: any, b: any) => b.total - a.total)
+          .slice(0, 5);
+      }
+
+      return data?.slice(0, 5) || [];
+    },
+  });
+
   // Fetch centros de costo con mayor consumo
   const { data: centrosConsumo } = useQuery({
     queryKey: ["centros-consumo"],
@@ -215,7 +278,8 @@ export default function Dashboard() {
     },
   });
 
-  const isLoading = loadingEmpresas || loadingSucursales || loadingCentros || loadingConceptos;
+  const isLoading =
+    loadingEmpresas || loadingSucursales || loadingCentros || loadingConceptos || loadingGastos;
 
   if (isLoading) {
     return <LoadingSkeleton />;
@@ -285,6 +349,63 @@ export default function Dashboard() {
           <CardContent>
             <div className="text-2xl font-bold">{usuariosStats?.activos || 0}</div>
             <p className="text-xs text-muted-foreground">Total: {usuariosStats?.total || 0}</p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* KPIs de Gastos */}
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Total Gastado (Mes)</CardTitle>
+            <Receipt className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">
+              {formatCurrency(statsGastos?.monto_total_pen || 0)}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {statsGastos?.total_gastos || 0} gastos registrados
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Pendientes Aprobación</CardTitle>
+            <Clock className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{statsGastos?.gastos_pendientes || 0}</div>
+            <p className="text-xs text-muted-foreground">
+              {formatCurrency(statsGastos?.monto_pendiente_pen || 0)} por aprobar
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Aprobados por Pagar</CardTitle>
+            <CheckCircle2 className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{statsGastos?.gastos_aprobados || 0}</div>
+            <p className="text-xs text-muted-foreground">
+              {formatCurrency(statsGastos?.monto_aprobado_pen || 0)} por pagar
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Pagados (Mes)</CardTitle>
+            <DollarSign className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{statsGastos?.gastos_pagados || 0}</div>
+            <p className="text-xs text-muted-foreground">
+              {formatCurrency(statsGastos?.monto_aprobado_pen || 0)} en proceso
+            </p>
           </CardContent>
         </Card>
       </div>
@@ -412,6 +533,71 @@ export default function Dashboard() {
                 />
               </PieChart>
             </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Gráficos de Gastos - Tercera Fila */}
+      <div className="grid gap-4 md:grid-cols-2">
+        {/* Gráfico de Gastos por Concepto */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Top Gastos por Concepto</CardTitle>
+            <CardDescription>Gastos del mes actual por concepto</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ResponsiveContainer width="100%" height={300}>
+              <BarChart data={gastosPorConcepto || []}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="concepto" angle={-45} textAnchor="end" height={100} />
+                <YAxis />
+                <Tooltip
+                  formatter={(value: number) => formatCurrency(value)}
+                  contentStyle={{
+                    background: "hsl(var(--card))",
+                    border: "1px solid hsl(var(--border))",
+                  }}
+                />
+                <Bar dataKey="total" fill="#8b5cf6" name="Total Gastado" />
+              </BarChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+
+        {/* Lista de Gastos Pendientes */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Gastos Pendientes de Aprobación</CardTitle>
+            <CardDescription>Últimos gastos esperando aprobación</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-3">
+              {gastosPendientes && gastosPendientes.length > 0 ? (
+                gastosPendientes.map((gasto) => (
+                  <div key={gasto.id} className="flex items-center justify-between border-b pb-2">
+                    <div className="flex-1">
+                      <p className="font-medium text-sm">{gasto.codigo}</p>
+                      <p className="text-xs text-muted-foreground truncate">
+                        {gasto.concepto_nombre || "Sin concepto"}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {gasto.usuario_email?.split("@")[0]}
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <p className="font-bold text-sm">
+                        {formatCurrency(Number(gasto.monto || 0))}
+                      </p>
+                      <p className="text-xs text-muted-foreground">{gasto.moneda}</p>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <p className="text-sm text-muted-foreground text-center py-8">
+                  No hay gastos pendientes
+                </p>
+              )}
+            </div>
           </CardContent>
         </Card>
       </div>
